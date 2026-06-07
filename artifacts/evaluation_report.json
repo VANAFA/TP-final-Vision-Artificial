@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-06-03T19:38:40.787046",
+  "paper_metrics": {
+    "detection_mAP50": 0.765,
+    "detection_mAP75": 0.548,
+    "da_segmentation_IoU": 0.915,
+    "ll_segmentation_IoU": 0.705
+  },
+  "reproduced_metrics": {
+    "detection_mAP50": null,
+    "detection_mAP75": null,
+    "da_segmentation_IoU": null,
+    "ll_segmentation_IoU": null
+  },
+  "configuration": {
+    "img_size": 640,
+    "batch_size": 16,
+    "epochs": 300,
+    "device": "cpu",
+    "seed": 42
+  },
+  "dataset": {
+    "root": "/media/vanafa/1TB/Workspace/Cuatri 7/Visi\u00f3n/TP Final/datasets",
+    "splits_available": true
+  },
+  "model": {
+    "weights": "/media/vanafa/1TB/Workspace/Cuatri 7/Visi\u00f3n/TP Final/YOLOP/weights/End-to-end.pth",
+    "type": "YOLOP",
+    "repo": "/media/vanafa/1TB/Workspace/Cuatri 7/Visi\u00f3n/TP Final/YOLOP"
+  },
+  "comparison": {}
+}

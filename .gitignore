@@ -1,0 +1,36 @@
+# Datasets - muy grandes
+datasets/
+
+# YOLOP folder - very large
+YOLOP/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Weights y modelos grandes
+*.pth
+*.onnx
+*.pt
+*.weights
+
+# Archivos temporales/grandes
+*.zip
+*.tar.gz
+
+# Otros
+.DS_Store
+*.log
+runs/

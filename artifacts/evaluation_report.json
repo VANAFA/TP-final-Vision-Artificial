@@ -1,32 +1,66 @@
 {
-  "timestamp": "2026-06-03T19:38:40.787046",
+  "timestamp": "2026-06-17T19:58:00-03:00",
   "paper_metrics": {
     "detection_mAP50": 0.765,
-    "detection_mAP75": 0.548,
     "da_segmentation_IoU": 0.915,
     "ll_segmentation_IoU": 0.705
   },
   "reproduced_metrics": {
-    "detection_mAP50": null,
-    "detection_mAP75": null,
-    "da_segmentation_IoU": null,
-    "ll_segmentation_IoU": null
+    "loss": 0.48,
+    "detection_precision": 0.085,
+    "detection_recall": 0.892,
+    "detection_mAP50": 0.765,
+    "detection_mAP50_95": 0.439,
+    "da_segmentation_accuracy": 0.925,
+    "da_segmentation_IoU": 0.563,
+    "da_segmentation_mIoU": 0.739,
+    "ll_segmentation_accuracy": 0.496,
+    "ll_segmentation_IoU": 0.347,
+    "ll_segmentation_mIoU": 0.664,
+    "inference_seconds_per_frame": 0.0762,
+    "nms_seconds_per_frame": 0.0004
+  },
+  "comparison": {
+    "detection_mAP50": {
+      "paper": 0.765,
+      "reproduced": 0.765,
+      "delta": 0.0,
+      "delta_percent": 0.0
+    },
+    "da_segmentation_IoU": {
+      "paper": 0.915,
+      "reproduced": 0.563,
+      "delta": -0.352,
+      "delta_percent": -38.47
+    },
+    "ll_segmentation_IoU": {
+      "paper": 0.705,
+      "reproduced": 0.347,
+      "delta": -0.358,
+      "delta_percent": -50.78
+    }
   },
   "configuration": {
     "img_size": 640,
-    "batch_size": 16,
-    "epochs": 300,
+    "batch_size_per_gpu": 1,
     "device": "cpu",
-    "seed": 42
+    "weights": "YOLOP/weights/End-to-end.pth",
+    "test_command": "python YOLOP/tools/test.py --weights YOLOP/weights/End-to-end.pth"
   },
   "dataset": {
-    "root": "/media/vanafa/1TB/Workspace/Cuatri 7/Visi\u00f3n/TP Final/datasets",
-    "splits_available": true
+    "source": "kaggle: solesensei/solesensei_bdd100k",
+    "prepared_root": "datasets/yolop_bdd100k",
+    "split": "val",
+    "samples": 10000,
+    "notes": [
+      "Detection annotations were converted from BDD100K aggregate JSON files into YOLOP per-image JSON format.",
+      "Drivable-area and lane-line masks were rasterized from BDD100K polygons in the Kaggle label JSON.",
+      "Detection mAP@0.5 is directly useful as a sanity check against the paper.",
+      "Segmentation metrics are useful for pipeline validation, but may not be exactly comparable to the paper's official prepared segmentation annotations."
+    ]
   },
-  "model": {
-    "weights": "/media/vanafa/1TB/Workspace/Cuatri 7/Visi\u00f3n/TP Final/YOLOP/weights/End-to-end.pth",
-    "type": "YOLOP",
-    "repo": "/media/vanafa/1TB/Workspace/Cuatri 7/Visi\u00f3n/TP Final/YOLOP"
-  },
-  "comparison": {}
+  "outputs": {
+    "run_dir": "YOLOP/runs/BddDataset/_2026-06-17-19-47",
+    "visualization_dir": "YOLOP/runs/BddDataset/_2026-06-17-19-47/visualization"
+  }
 }

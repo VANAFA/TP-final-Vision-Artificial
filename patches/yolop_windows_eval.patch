@@ -1,0 +1,68 @@
+diff --git a/lib/config/default.py b/lib/config/default.py
+index c1f044e..bf02f4d 100644
+--- a/lib/config/default.py
++++ b/lib/config/default.py
+@@ -5,8 +5,8 @@ from yacs.config import CfgNode as CN
+ _C = CN()
+ 
+ _C.LOG_DIR = 'runs/'
+-_C.GPUS = (0,1)     
+-_C.WORKERS = 8
++_C.GPUS = (0,)
++_C.WORKERS = 0
+ _C.PIN_MEMORY = False
+ _C.PRINT_FREQ = 20
+ _C.AUTO_RESUME =False       # Resume from the last training interrupt
+@@ -50,10 +50,10 @@ _C.LOSS.LL_IOU_GAIN = 0.2 # lane line iou loss gain
+ 
+ # DATASET related params
+ _C.DATASET = CN(new_allowed=True)
+-_C.DATASET.DATAROOT = '/home/zwt/bdd/bdd100k/images/100k'       # the path of images folder
+-_C.DATASET.LABELROOT = '/home/zwt/bdd/bdd100k/labels/100k'      # the path of det_annotations folder
+-_C.DATASET.MASKROOT = '/home/zwt/bdd/bdd_seg_gt'                # the path of da_seg_annotations folder
+-_C.DATASET.LANEROOT = '/home/zwt/bdd/bdd_lane_gt'               # the path of ll_seg_annotations folder
++_C.DATASET.DATAROOT = '../datasets/yolop_bdd100k/images'       # the path of images folder
++_C.DATASET.LABELROOT = '../datasets/yolop_bdd100k/det_annotations'      # the path of det_annotations folder
++_C.DATASET.MASKROOT = '../datasets/yolop_bdd100k/da_seg_annotations'                # the path of da_seg_annotations folder
++_C.DATASET.LANEROOT = '../datasets/yolop_bdd100k/ll_seg_annotations'               # the path of ll_seg_annotations folder
+ _C.DATASET.DATASET = 'BddDataset'
+ _C.DATASET.TRAIN_SET = 'train'
+ _C.DATASET.TEST_SET = 'val'
+@@ -118,7 +118,7 @@ _C.TRAIN.PLOT = True                #
+ 
+ # testing
+ _C.TEST = CN(new_allowed=True)
+-_C.TEST.BATCH_SIZE_PER_GPU = 24
++_C.TEST.BATCH_SIZE_PER_GPU = 1
+ _C.TEST.MODEL_FILE = ''
+ _C.TEST.SAVE_JSON = False
+ _C.TEST.SAVE_TXT = False
+diff --git a/lib/core/postprocess.py b/lib/core/postprocess.py
+index 9b56fc5..afb95b7 100644
+--- a/lib/core/postprocess.py
++++ b/lib/core/postprocess.py
+@@ -71,7 +71,7 @@ def build_targets(cfg, predictions, targets, model):
+ 
+         # Append
+         a = t[:, 6].long()  # anchor indices
+-        indices.append((b, a, gj.clamp_(0, gain[3] - 1), gi.clamp_(0, gain[2] - 1)))  # image, anchor, grid indices
++        indices.append((b, a, gj.clamp_(0, int(gain[3].item()) - 1), gi.clamp_(0, int(gain[2].item()) - 1)))  # image, anchor, grid indices
+         tbox.append(torch.cat((gxy - gij, gwh), 1))  # box
+         anch.append(anchors[a])  # anchors
+         tcls.append(c)  # class
+diff --git a/tools/test.py b/tools/test.py
+index 701386b..626734d 100644
+--- a/tools/test.py
++++ b/tools/test.py
+@@ -81,9 +81,9 @@ def main():
+ 
+     # det_idx_range = [str(i) for i in range(0,25)]
+     model_dict = model.state_dict()
+-    checkpoint_file = args.weights
++    checkpoint_file = args.weights[0] if isinstance(args.weights, list) else args.weights
+     logger.info("=> loading checkpoint '{}'".format(checkpoint_file))
+-    checkpoint = torch.load(checkpoint_file)
++    checkpoint = torch.load(checkpoint_file, map_location=device)
+     checkpoint_dict = checkpoint['state_dict']
+     # checkpoint_dict = {k: v for k, v in checkpoint['state_dict'].items() if k.split(".")[1] in det_idx_range}
+     model_dict.update(checkpoint_dict)

@@ -9,6 +9,8 @@ from lib.core.general import non_max_suppression
 from beamngpy import BeamNGpy, Vehicle
 from beamngpy.sensors import Camera
 
+from camera_calibration import COMMA_VFOV_DEG, BEAMNG_FAR_PLANE_M
+
 class YOLOPDetector:
     def __init__(self, weight_path="./weights/yolop-640-640.onnx"):
         # Inicializar ONNX una sola vez
@@ -126,10 +128,11 @@ def main():
     up = (0, 0, 1)
     
     # Pedir resolución nativa fácil de procesar o escalar
-    front_camera = Camera('front_cam', bng, vehicle, 
+    front_camera = Camera('front_cam', bng, vehicle,
                           requested_capabilities=['colour'],
                           pos=pos, dir=direction, up=up,
-                          fov=70, resolution=(640, 480))
+                          fov=COMMA_VFOV_DEG, resolution=(640, 480),
+                          near_far_planes=(0.05, BEAMNG_FAR_PLANE_M))
 
     print("[Simulador] Entorno conectado. Iniciando bucle sincrónico...")
     

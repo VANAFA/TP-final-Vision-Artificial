@@ -66,6 +66,26 @@ def sanitize_for_windows(rel_path: str) -> str:
     return "/".join(INVALID_WIN_CHARS_RE.sub("_", part) for part in rel_path.split("/"))
 
 
+def safe_unlink(path: Path, retries: int = 10, delay_s: float = 2.0) -> None:
+    """Deletes `path`, retrying on Windows' transient WinError 32 ("being used by another
+    process"). The torrent client (qBittorrent/libtorrent) can hold the just-finished zip open
+    a few seconds longer for its own post-download hashing/bookkeeping even after our download
+    loop sees 100% progress -- deleting immediately races that. The extraction itself (reading
+    the zip, writing segment files elsewhere) already succeeded by the time this runs; losing
+    this race must not raise, since `keep_zip=False` is just disk cleanup, not a real failure."""
+    for attempt in range(retries):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if attempt == retries - 1:
+                print(f"  warning: could not delete {path} after {retries} attempts "
+                      f"(still locked by the torrent client) -- delete it manually later "
+                      f"to reclaim disk space.", file=sys.stderr)
+                return
+            time.sleep(delay_s)
+
+
 def extract_segments_from_zip(zip_path: Path, out_dir: Path, segments: list[dict] | None, max_segments: int) -> int:
     """Pulls only a handful of segment folders out of a whole-chunk zip."""
     with zipfile.ZipFile(zip_path) as zf:
@@ -170,7 +190,7 @@ def download_with_libtorrent(out_dir: Path, chunks: list[int], segments: list[di
         zip_path = out_dir / zip_rel_path
         n_segments += extract_segments_from_zip(zip_path, out_dir, segments, max_segments)
         if not keep_zip:
-            zip_path.unlink(missing_ok=True)
+            safe_unlink(zip_path)
     print(f"Done. {n_segments} segment(s) extracted under {out_dir.resolve()}")
 
 
@@ -224,6 +244,27 @@ def download_with_qbittorrent(
         client.torrents_file_priority(torrent_hash=torrent_hash, file_ids=skip_ids, priority=0)
     client.torrents_file_priority(torrent_hash=torrent_hash, file_ids=want_ids, priority=1)
 
+    # qBittorrent's own progress/piece-completion bookkeeping is independent of the actual
+    # filesystem: if a previous run (or our own --keep-zip=False cleanup) deleted a zip that
+    # qBittorrent had already verified, it still reports progress=1.0 for that file -- it only
+    # notices the file is gone after an explicit recheck. Compare on-disk size to the expected
+    # size up front and force a recheck if anything's missing/short, so the polling loop below
+    # reflects what's actually on disk, not stale in-memory state.
+    expected_size = {f.name: f.size for f in [f for f in files if f.id in want_ids]}
+    on_disk_matches = all(
+        (out_dir / rel_path).exists() and (out_dir / rel_path).stat().st_size == expected_size[rel_path]
+        for rel_path in wanted_zips
+    )
+    if not on_disk_matches:
+        print("  on-disk file(s) missing/incomplete relative to qBittorrent's last known state "
+              "-- forcing a recheck...")
+        client.torrents_recheck(torrent_hashes=torrent_hash)
+        for _ in range(60):
+            torrent = client.torrents_info(torrent_hashes=torrent_hash)[0]
+            if torrent.state not in ("checkingDL", "checkingUP", "checkingResumeData", "allocating"):
+                break
+            time.sleep(2)
+
     while True:
         files = client.torrents_files(torrent_hash=torrent_hash)
         wanted = [f for f in files if f.id in want_ids]
@@ -232,17 +273,38 @@ def download_with_qbittorrent(
         torrent = client.torrents_info(torrent_hashes=torrent_hash)[0]
         pct = 100.0 * done / total if total else 100.0
         print(f"\r  {pct:5.1f}% | down {torrent.dlspeed / 1000:.1f} kB/s | peers {torrent.num_leechs + torrent.num_seeds}", end="")
-        if pct >= 99.9:
+        if all(f.progress >= 1.0 for f in wanted):
             break
         time.sleep(2)
     print()
+
+    # qBittorrent reporting progress==1.0 (piece-hash verified) doesn't guarantee the file has
+    # finished being flushed/moved into its final on-disk location yet -- reading the zip too
+    # early can land mid-move and corrupt the read (seen in practice: a zlib "invalid stored
+    # block lengths" error while extracting, on a torrent that qBittorrent considered 100%
+    # done). Wait for the on-disk file size to actually match the expected size before opening
+    # the zip, not just the API's progress flag.
+    expected_size = {f.name: f.size for f in wanted}
+    for rel_path in wanted_zips:
+        zip_path = out_dir / rel_path
+        for attempt in range(30):
+            actual_size = zip_path.stat().st_size if zip_path.exists() else -1
+            if actual_size == expected_size[rel_path]:
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError(
+                f"{zip_path} never reached its expected size "
+                f"({expected_size[rel_path]} bytes) on disk after waiting -- download likely "
+                f"incomplete or still being moved by qBittorrent."
+            )
 
     n_segments = 0
     for rel_path in wanted_zips:
         zip_path = out_dir / rel_path
         n_segments += extract_segments_from_zip(zip_path, out_dir, segments, max_segments)
         if not keep_zip:
-            zip_path.unlink(missing_ok=True)
+            safe_unlink(zip_path)
     print(f"Done. {n_segments} segment(s) extracted under {out_dir.resolve()}")
 
 

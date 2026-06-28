@@ -1,5 +1,6 @@
 # Datasets - muy grandes
 datasets/
+data/
 
 # YOLOP folder - very large
 YOLOP/
@@ -34,3 +35,10 @@ venv/
 .DS_Store
 *.log
 runs/
+
+# Manual BeamNG screenshots dropped in for segmentation sanity checks (3 ...ipynb)
+screenshots/
+
+# Licencia BeamNG.tech - no commitear
+tech.key
+*.key

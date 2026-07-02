@@ -218,7 +218,7 @@ def lane_center_error(left_pts, right_pts, img_width, last_error=0.0):
     else:
         return last_error
 
-    return float(np.clip((lane_center - cx) / (img_width / 2.0), -1.0, 1.0))
+    return float(np.clip((cx - lane_center) / (img_width / 2.0), -1.0, 1.0))
 
 
 class PIDLaneKeeper:

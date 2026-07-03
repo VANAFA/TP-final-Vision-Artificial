@@ -228,7 +228,7 @@ class PIDLaneKeeper:
       error < 0  (car left  of centre) → positive steer (turn right)
     """
 
-    def __init__(self, kp=0.4, ki=0.002, kd=0.08, max_steer=0.5):
+    def __init__(self, kp=0.1, ki=0.002, kd=0.04, max_steer=0.5):
         self.kp = kp
         self.ki = ki
         self.kd = kd

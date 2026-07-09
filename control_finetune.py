@@ -133,6 +133,129 @@ def preprocess_image_bgr(img_bgr: np.ndarray, size: int = 640, augmentations: A.
     return torch.from_numpy(img)
 
 
+# ImageNet mean in BGR channel order — used to fill masked pixels so they
+# normalize to ≈0 and are invisible to the backbone (and to Grad-CAM).
+# RGB mean: [0.485, 0.456, 0.406] → BGR: [0.406, 0.456, 0.485] × 255
+_IMAGENET_MEAN_BGR = np.array([103.5, 116.3, 123.7], dtype=np.float32)
+
+
+def lane_preprocess(
+    img_bgr: np.ndarray,
+    outside_alpha: float = 0.0,
+    extend_to_top: bool = False,
+) -> np.ndarray:
+    """Mask pixels outside the Hough-detected lane polygon.
+
+    `outside_alpha=0.0` (default): masked pixels are filled with the ImageNet
+    mean in BGR so they normalize to ≈0 and appear as a neutral "no-signal"
+    region to the backbone and Grad-CAM (not the large-negative artifact that
+    true-zero BGR produces after ImageNet normalization).
+
+    `extend_to_top=True`: extrapolates the lane lines to y=0 creating a full-
+    height corridor mask — used for the brake diff channels so vehicles ahead
+    (which appear above the short lane-marking polygon) are not blacked out.
+
+    Falls back to the raw frame when both lane lines are not detected.
+    """
+    try:
+        from lane_pid import detect_lane_lines
+        left_pts, right_pts, _ = detect_lane_lines(img_bgr)
+    except Exception:
+        return img_bgr
+
+    if not left_pts or not right_pts:
+        return img_bgr
+
+    h, w = img_bgr.shape[:2]
+    (xl_bot, yl_bot), (xl_top, yl_top) = left_pts
+    (xr_bot, yr_bot), (xr_top, yr_top) = right_pts
+
+    if extend_to_top:
+        # Extrapolate each line to y=0 using its slope (dx per unit dy going upward).
+        slope_l = (xl_top - xl_bot) / (yl_top - yl_bot) if yl_top != yl_bot else 0
+        slope_r = (xr_top - xr_bot) / (yr_top - yr_bot) if yr_top != yr_bot else 0
+        xl_zero = int(xl_bot + slope_l * (0 - yl_bot))
+        xr_zero = int(xr_bot + slope_r * (0 - yr_bot))
+        poly = np.array([
+            [xl_bot, yl_bot],
+            [xl_zero, 0],
+            [xr_zero, 0],
+            [xr_bot, yr_bot],
+        ], dtype=np.int32)
+    else:
+        poly = np.array([
+            [xl_bot, yl_bot],
+            [xl_top, yl_top],
+            [xr_top, yr_top],
+            [xr_bot, yr_bot],
+        ], dtype=np.int32)
+
+    inside = np.zeros((h, w), dtype=np.float32)
+    cv2.fillConvexPoly(inside, poly, 1.0)
+
+    out = img_bgr.astype(np.float32)
+    if outside_alpha == 0.0:
+        # Fill outside with ImageNet mean so masked pixels normalize to ≈0.
+        outside_mask = inside < 0.5
+        out[outside_mask] = _IMAGENET_MEAN_BGR
+    else:
+        alpha_map = outside_alpha + (1.0 - outside_alpha) * inside
+        out = out * alpha_map[:, :, np.newaxis]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def preprocess_image_bgr_temporal(
+    frames_bgr: list,
+    size: int = 640,
+    augmentations: "A.Compose | None" = None,
+) -> torch.Tensor:
+    """Build a 9-channel temporal tensor from three successive BGR frames [t-2, t-1, t].
+
+    Channels 0-2: current frame (hard lane mask, outside→0, letterboxed, ImageNet-normalised)
+    Channels 3-5: pixel diff  frame_t  minus frame_{t-1}  (raw, float, centred at 0)
+    Channels 6-8: pixel diff  frame_{t-1} minus frame_{t-2}  (raw, float, centred at 0)
+
+    Lane masking is applied as a full black mask (outside_alpha=0) only to the current
+    frame (channels 0-2), which drives the steer head via the backbone's road/lane attention.
+    Diff channels are computed from raw unmasked frames so brake_trunk receives uncorrupted
+    full-scene motion — masking older frames before diffing would introduce large spurious
+    gradients at lane-mask boundaries that have nothing to do with object motion.
+    """
+    while len(frames_bgr) < 3:
+        frames_bgr = [frames_bgr[0]] + list(frames_bgr)
+    f2_raw, f1_raw, f0_raw = frames_bgr  # oldest → newest
+
+    # Full lane mask on current frame (steer, ch 0-2).
+    f0_steer = lane_preprocess(f0_raw, outside_alpha=0.0, extend_to_top=False)
+
+    # Lane corridor mask on all 3 frames (brake diffs, ch 3-8): extends lines to
+    # the top of the frame so vehicles ahead are not blacked out.
+    f0_brake = lane_preprocess(f0_raw, outside_alpha=0.0, extend_to_top=True)
+    f1_brake = lane_preprocess(f1_raw, outside_alpha=0.0, extend_to_top=True)
+    f2_brake = lane_preprocess(f2_raw, outside_alpha=0.0, extend_to_top=True)
+
+    def _to_float(bgr: np.ndarray) -> np.ndarray:
+        return resize_unscale(bgr[:, :, ::-1].copy(), (size, size)) / 255.0  # (H,W,3) [0,1]
+
+    t0 = _to_float(f0_steer)   # masked current frame for steer backbone
+
+    diff_10 = (_to_float(f0_brake) - _to_float(f1_brake)).astype(np.float32)  # corridor-masked diffs
+    diff_21 = (_to_float(f1_brake) - _to_float(f2_brake)).astype(np.float32)
+
+    if augmentations is not None:
+        t0_u8 = (t0 * 255).clip(0, 255).astype(np.uint8)
+        t0_u8 = augmentations(image=t0_u8)["image"]
+        t0 = t0_u8.astype(np.float32) / 255.0
+
+    t0_norm = ((t0 - IMAGENET_MEAN) / IMAGENET_STD).astype(np.float32)
+
+    ch_frame = t0_norm.transpose(2, 0, 1)   # (3, H, W) normalised current frame
+    ch_d10   = diff_10.transpose(2, 0, 1)    # (3, H, W) current-prev diff
+    ch_d21   = diff_21.transpose(2, 0, 1)    # (3, H, W) prev-prevprev diff
+
+    return torch.from_numpy(np.concatenate([ch_frame, ch_d10, ch_d21], axis=0))  # (9, H, W)
+
+
 class YOLOPControlNet(nn.Module):
     """Frozen YOLOP backbone + small trainable shared trunk + separate steer/brake heads.
 
@@ -194,14 +317,28 @@ class YOLOPControlNet(nn.Module):
         weights_path: Path = YOLOP_REPO / "weights" / "End-to-end.pth",
         device="cpu",
         detach_brake_grad: bool = True,
+        temporal: bool = True,
     ):
         super().__init__()
         self.detach_brake_grad = detach_brake_grad
+        self.temporal = temporal
 
         self.backbone = load_yolop_backbone(weights_path, device=device)
         for p in self.backbone.parameters():
             p.requires_grad_(False)
         self.backbone.eval()
+
+        if temporal:
+            # 9→3 adapter: blends [current_frame (3ch) | diff_t/t-1 (3ch) | diff_t-1/t-2 (3ch)]
+            # into 3 channels the frozen backbone can consume without weight surgery.
+            # Initialised as identity on channels 0-2, zeroed for 3-8, so untrained it
+            # passes through the current frame only — behaviour degrades gracefully to the
+            # non-temporal baseline on epoch 0.
+            self.temporal_adapter = nn.Conv2d(9, 3, 1, bias=False)
+            with torch.no_grad():
+                self.temporal_adapter.weight.zero_()
+                for i in range(3):
+                    self.temporal_adapter.weight[i, i, 0, 0] = 1.0
 
         self._encoder_feat = None
         self.backbone.model[self.ENCODER_LAYER_INDEX].register_forward_hook(self._capture_encoder_feat)
@@ -241,13 +378,16 @@ class YOLOPControlNet(nn.Module):
         self._encoder_feat = output
 
     def trainable_parameters(self):
-        return (
+        params = (
             list(self.numeric_branch.parameters())
             + list(self.shared_trunk.parameters())
             + list(self.steer_head.parameters())
             + list(self.brake_trunk.parameters())
             + list(self.brake_head.parameters())
         )
+        if self.temporal:
+            params += list(self.temporal_adapter.parameters())
+        return params
 
     def _road_mask(self, da_seg_out: torch.Tensor, ll_seg_out: torch.Tensor, spatial_hw) -> torch.Tensor:
         """Resizes YOLOP's drivable-area + lane-line maps (B,2,640,640 each, sigmoid already
@@ -297,6 +437,8 @@ class YOLOPControlNet(nn.Module):
         return feats
 
     def forward(self, image: torch.Tensor, numeric: torch.Tensor) -> torch.Tensor:
+        if self.temporal and image.shape[1] == 9:
+            image = self.temporal_adapter(image)  # (B, 9, H, W) → (B, 3, H, W)
         with torch.no_grad():
             det_out, da_seg_out, ll_seg_out = self.backbone(image)
         encoder_feat = self._encoder_feat  # (B, 256, h, w)
@@ -349,18 +491,37 @@ class Comma2k19ControlDataset(Dataset):
         do_augment = (split == "train") if augment is None else augment
         self.augmentations = build_train_augmentations() if do_augment else None
 
+        # Consecutive-frame index map for temporal stacking.
+        # Segment = parent directory of image_path — consecutive rows in the same
+        # directory are consecutive recorded frames. At segment boundaries (or for
+        # the very first frame in a segment) prev indices clamp to self so the buffer
+        # pads gracefully with the current frame instead of crossing into another drive.
+        _segs = self.df["image_path"].apply(lambda p: str(Path(p).parent))
+        n = len(self.df)
+        self._prev1_idx = np.arange(n, dtype=np.int64)
+        for i in range(1, n):
+            if _segs.iloc[i] == _segs.iloc[i - 1]:
+                self._prev1_idx[i] = i - 1
+        # prev2 = transitively prev1 of prev1 (handles segment-boundary clamping automatically)
+        self._prev2_idx = self._prev1_idx[self._prev1_idx]
+
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, idx):
-        # Each DataLoader worker is its own process with its own OpenCV thread pool; left at
-        # cv2's default it spawns one thread per CPU core *per worker*, oversubscribing the
-        # machine once num_workers > 1. Pin each worker to single-threaded OpenCV ops instead
-        # (cheap/idempotent to call here -- no per-process worker_init_fn needed).
-        cv2.setNumThreads(0)
-        row = self.df.iloc[idx]
-        img_bgr = cv2.imread(str(self.frames_root / row["image_path"]))
-        image = preprocess_image_bgr(img_bgr, self.image_size, augmentations=self.augmentations)
+        cv2.setNumThreads(0)  # see __init__ comment on worker thread oversubscription
+        row   = self.df.iloc[idx]
+        row_1 = self.df.iloc[self._prev1_idx[idx]]
+        row_2 = self.df.iloc[self._prev2_idx[idx]]
+
+        def _load(r):
+            img = cv2.imread(str(self.frames_root / r["image_path"]))
+            if img is None:
+                img = np.zeros((480, 640, 3), dtype=np.uint8)
+            return img
+
+        frames = [_load(row_2), _load(row_1), _load(row)]  # [t-2, t-1, t]
+        image   = preprocess_image_bgr_temporal(frames, self.image_size, self.augmentations)
         numeric = torch.tensor([row[c] for c in self.NUMERIC_COLS], dtype=torch.float32)
-        target = torch.tensor([row[c] for c in self.TARGET_COLS], dtype=torch.float32)
+        target  = torch.tensor([row[c] for c in self.TARGET_COLS],   dtype=torch.float32)
         return image, numeric, target

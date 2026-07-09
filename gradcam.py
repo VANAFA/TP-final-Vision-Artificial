@@ -45,7 +45,13 @@ class YOLOPControlGradCAM:
 
         image = image.clone().requires_grad_(True)
         with torch.enable_grad():
-            det_out, da_seg_out, ll_seg_out = self.model.backbone(image)  # fires forward hook -> _encoder_feat
+            # Apply temporal adapter before backbone (mirrors YOLOPControlNet.forward).
+            # Without this, a 9-ch temporal tensor reaches Focus's pixel-shuffle and
+            # produces 36 channels where the first Conv2d expects 12 (3×4).
+            backbone_input = image
+            if self.model.temporal and image.shape[1] == 9:
+                backbone_input = self.model.temporal_adapter(backbone_input)
+            det_out, da_seg_out, ll_seg_out = self.model.backbone(backbone_input)  # fires forward hook -> _encoder_feat
             feat = self.model._encoder_feat
             feat.retain_grad()
 

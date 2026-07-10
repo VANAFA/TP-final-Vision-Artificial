@@ -1,0 +1,52 @@
+# ── Core deep learning ────────────────────────────────────────────────────────
+# Install the CUDA build explicitly; plain `pip install torch` resolves to CPU-only on Windows.
+# Adjust the index URL if your driver supports a newer CUDA version (cu128, cu129, etc.).
+# Check with: nvidia-smi
+torch>=2.0.0
+torchvision>=0.15.0
+# Install command (run this instead of pip install -r requirements.txt for torch):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+
+# ── Computer vision ────────────────────────────────────────────────────────────
+# NOTE: albumentations pulls in opencv-python-headless as a dependency, which breaks
+# cv2 GUI functions needed by notebook 2. After installing, run:
+#   pip uninstall -y opencv-python-headless
+#   pip install --force-reinstall --no-deps opencv-python
+opencv-python>=4.8.0
+albumentations>=1.3.0
+imageio-ffmpeg>=0.4.8
+Pillow>=10.0.0
+
+# ── Data / numerics ───────────────────────────────────────────────────────────
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+
+# ── Plotting / figures ────────────────────────────────────────────────────────
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ── Notebooks ─────────────────────────────────────────────────────────────────
+jupyter
+ipykernel
+papermill>=2.4.0
+nbformat>=5.9.0
+
+# ── BeamNG integration ────────────────────────────────────────────────────────
+# Requires BeamNG.tech (not BeamNG.drive) — see README for license setup.
+beamngpy>=1.28.0
+
+# ── Input / screen capture (closed-loop keyboard controls) ───────────────────
+keyboard>=0.13.5
+mss>=9.0.0
+
+# ── Training utilities ────────────────────────────────────────────────────────
+tensorboardX>=2.6.0
+tqdm>=4.65.0
+yacs>=0.1.8
+
+# ── Comma2k19 download (optional) ────────────────────────────────────────────
+# tools/download_comma2k19.py drives qBittorrent's Web UI as a fallback.
+# libtorrent has no Windows wheel for Python 3.12+, so qBittorrent is the working path.
+qbittorrent-api>=2023.1.0

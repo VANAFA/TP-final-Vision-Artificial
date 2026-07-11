@@ -277,6 +277,50 @@ def road_mask_with_lane_attention(
     return highlighted, left_fit, right_fit, reconstructed
 
 
+def own_lane_hough_mask(
+    shape_hw: tuple[int, int],
+    left_pts,
+    right_pts,
+    vehicle_boxes: np.ndarray,
+) -> np.ndarray:
+    """Binary (H, W) mask covering only the ego lane and detected vehicles.
+
+    Uses the Hough-detected lane endpoints from `detect_lane_lines` to build a
+    filled quadrilateral between the two lane lines.  When one side is missing the
+    corresponding frame edge (x=0 or x=w-1) is used as the fallback boundary so
+    the mask never collapses to nothing on a one-line frame.
+
+    left_pts / right_pts: ((x_bot, y_bot), (x_top, y_top)) or None
+    """
+    h, w = shape_hw
+    mask = np.zeros((h, w), dtype=np.uint8)
+
+    if left_pts is not None:
+        ll_bot = left_pts[0]
+        ll_top = left_pts[1]
+    else:
+        # fall back to left frame edge at the same row range as right
+        y_bot = right_pts[0][1] if right_pts else int(h * 0.75)
+        y_top = right_pts[1][1] if right_pts else int(h * 0.50)
+        ll_bot = (0, y_bot)
+        ll_top = (0, y_top)
+
+    if right_pts is not None:
+        rl_bot = right_pts[0]
+        rl_top = right_pts[1]
+    else:
+        y_bot = left_pts[0][1] if left_pts else int(h * 0.75)
+        y_top = left_pts[1][1] if left_pts else int(h * 0.50)
+        rl_bot = (w - 1, y_bot)
+        rl_top = (w - 1, y_top)
+
+    poly = np.array([[ll_bot, ll_top, rl_top, rl_bot]], dtype=np.int32)
+    cv2.fillPoly(mask, poly, 1)
+
+    veh = vehicle_mask(shape_hw, vehicle_boxes)
+    return np.clip(mask + veh, 0, 1).astype(np.uint8)
+
+
 def apply_mask(img_bgr: np.ndarray, mask: np.ndarray, fill: int = 0) -> np.ndarray:
     """Blacks out (or fills with `fill`) every pixel where `mask` is 0."""
     out = img_bgr.copy()
